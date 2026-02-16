@@ -78,6 +78,11 @@ class SaldoVacaciones(TimeStampedModel):
     dias_usados = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     dias_pendientes = models.DecimalField(max_digits=5, decimal_places=2, default=0)
 
+    @property
+    def dias_disponibles(self):
+        """Propiedad calculada: dias_generados - dias_usados. No se persiste en BD."""
+        return self.dias_generados - self.dias_usados
+
     class Meta:
         constraints = [
             models.UniqueConstraint(

@@ -4,10 +4,12 @@ from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
 from .models import (
-    TipoAusencia, EstadoSolicitud, CalendarioLaboral, 
+    TipoAusencia, EstadoSolicitud, CalendarioLaboral,
     SolicitudAusencia, HistorialSolicitud
 )
+from .services.saldo_service import consumir_saldo_al_aprobar, SaldoInsuficienteError
 from .serializers import (
     TipoAusenciaSerializer, EstadoSolicitudSerializer, 
     CalendarioLaboralSerializer, SolicitudAusenciaSerializer, 
@@ -64,24 +66,31 @@ class SolicitudAusenciaViewSet(viewsets.ModelViewSet):
         except EstadoSolicitud.DoesNotExist:
             return Response({"error": "Invalid state ID"}, status=status.HTTP_404_NOT_FOUND)
 
-        with transaction.atomic():
-            estado_anterior = solicitud.estado
-            
-            # Update request
-            solicitud.estado = nuevo_estado
-            solicitud.fecha_respuesta = timezone.now()
-            solicitud.comentario_aprobador = comentario
-            solicitud.save()
+        try:
+            with transaction.atomic():
+                # Consumir saldo si se aprueba la solicitud
+                if nuevo_estado.nombre and nuevo_estado.nombre.lower() == "aprobada":
+                    consumir_saldo_al_aprobar(solicitud)
 
-            # Create history record
-            HistorialSolicitud.objects.create(
-                solicitud=solicitud,
-                estado_anterior=estado_anterior,
-                estado_nuevo=nuevo_estado,
-                usuario=request.user,
-                comentario=comentario,
-                fecha_cambio=timezone.now()
-            )
+                estado_anterior = solicitud.estado
+
+                # Update request
+                solicitud.estado = nuevo_estado
+                solicitud.fecha_respuesta = timezone.now()
+                solicitud.comentario_aprobador = comentario
+                solicitud.save()
+
+                # Create history record
+                HistorialSolicitud.objects.create(
+                    solicitud=solicitud,
+                    estado_anterior=estado_anterior,
+                    estado_nuevo=nuevo_estado,
+                    usuario=request.user,
+                    comentario=comentario,
+                    fecha_cambio=timezone.now()
+                )
+        except SaldoInsuficienteError:
+            return Response({"error": "Saldo insuficiente"}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(self.get_serializer(solicitud).data)
 
