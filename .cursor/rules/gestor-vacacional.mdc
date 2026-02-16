@@ -1,0 +1,40 @@
+---
+description: Contexto del sistema de gestión vacacional (dominio, modelos y convenciones)
+alwaysApply: true
+---
+
+# Sistema de gestión vacacional
+
+Este proyecto es una API Django + DRF para gestionar vacaciones y ausencias.
+
+## Dominio
+
+- **Catálogos**: `PeriodoVacacional` (año, fechas), `TipoAusencia` (Vacaciones, Permiso, etc.), `EstadoSolicitud` (Pendiente, Aprobada, Rechazada, Cancelada).
+- **Saldos**: `SaldoVacaciones` por empleado y periodo (`dias_generados`, `dias_usados`, `dias_pendientes`). Empleado = `settings.AUTH_USER_MODEL`.
+- **Calendario**: `TipoDiaCalendario` (laborable/festivo), `CalendarioLaboral` (fecha + tipo). Usar `calendar_service.calcular_dias_habiles(fecha_inicio, fecha_fin)` para días hábiles.
+- **Solicitudes**: `SolicitudAusencia` (empleado, tipo_ausencia, fecha_inicio/fin, dias_solicitados, estado, motivo, comentario_aprobador). Cada cambio de estado se registra en `HistorialSolicitud`.
+
+## Convenciones
+
+- Modelos con auditoría: heredar de `TimeStampedModel` (created_at, updated_at).
+- Catálogos con `activo`: filtrar por `activo=True` en APIs (ej. `TipoAusencia.objects.filter(activo=True)`).
+- APIs: catálogos como `ReadOnlyModelViewSet`; `SolicitudAusencia` como `ModelViewSet` con acciones `history` y `change-status`.
+- Lógica de negocio (cálculo de días, reglas) en servicios bajo `solicitudes/services/`; vistas delgadas.
+- Cambios de estado de solicitud: usar `transaction.atomic()`, actualizar solicitud y crear `HistorialSolicitud` en la misma transacción.
+
+## Ejemplo: cambio de estado
+
+```python
+with transaction.atomic():
+    estado_anterior = solicitud.estado
+    solicitud.estado = nuevo_estado
+    solicitud.fecha_respuesta = timezone.now()
+    solicitud.save()
+    HistorialSolicitud.objects.create(
+        solicitud=solicitud,
+        estado_anterior=estado_anterior,
+        estado_nuevo=nuevo_estado,
+        usuario=request.user,
+        fecha_cambio=timezone.now()
+    )
+```
