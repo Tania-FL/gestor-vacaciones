@@ -38,3 +38,26 @@ with transaction.atomic():
         fecha_cambio=timezone.now()
     )
 ```
+## Reglas de negocio — Saldos de vacaciones
+
+El modelo `SaldoVacaciones` mantiene el control de los días asignados y consumidos por empleado y periodo.
+
+Campos:
+
+- **dias_generados**  
+  Días otorgados al empleado por periodo laboral.  
+  Regla actual del sistema: **6 días cada 6 meses**.  
+  Este valor se almacena en base de datos.
+
+- **dias_usados**  
+  Días consumidos por el empleado en solicitudes aprobadas (vacaciones, permisos u otras ausencias aplicables).  
+  Se almacena en base de datos y se actualiza conforme se aprueban solicitudes.
+
+- **dias_pendientes**  
+  Resultado de `dias_generados - dias_usados`.  
+  Se almacena en base de datos para facilitar consultas rápidas e histórico.
+
+- **dias_disponibles**  
+  Propiedad calculada del modelo (no persistida), que representa:
+  `dias_generados - dias_usados`.  
+  Se utiliza para validar disponibilidad en tiempo real al registrar nuevas solicitudes.
