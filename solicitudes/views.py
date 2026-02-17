@@ -9,7 +9,12 @@ from .models import (
     TipoAusencia, EstadoSolicitud, CalendarioLaboral,
     SolicitudAusencia, HistorialSolicitud
 )
-from .services.saldo_service import consumir_saldo_al_aprobar, SaldoInsuficienteError
+from .services.saldo_service import (
+    consumir_saldo_al_aprobar,
+    revertir_saldo_al_cancelar_o_rechazar,
+    SaldoInsuficienteError,
+    SaldoNoExisteError,
+)
 from .serializers import (
     TipoAusenciaSerializer, EstadoSolicitudSerializer, 
     CalendarioLaboralSerializer, SolicitudAusenciaSerializer, 
@@ -66,31 +71,38 @@ class SolicitudAusenciaViewSet(viewsets.ModelViewSet):
         except EstadoSolicitud.DoesNotExist:
             return Response({"error": "Invalid state ID"}, status=status.HTTP_404_NOT_FOUND)
 
+        estado_anterior = solicitud.estado
+        es_aprobada = int(nuevo_estado_id) == 1
+        es_cancelada_o_rechazada = nuevo_estado.nombre and nuevo_estado.nombre.lower() in (
+            "cancelada",
+            "rechazada",
+        )
+        era_aprobada = estado_anterior.nombre and estado_anterior.nombre.lower() == "aprobada"
+
         try:
             with transaction.atomic():
-                # Consumir saldo si se aprueba la solicitud
-                if nuevo_estado.nombre and nuevo_estado.nombre.lower() == "aprobada":
+                if es_aprobada:
                     consumir_saldo_al_aprobar(solicitud)
+                elif era_aprobada and es_cancelada_o_rechazada:
+                    revertir_saldo_al_cancelar_o_rechazar(solicitud, estado_anterior)
 
-                estado_anterior = solicitud.estado
-
-                # Update request
                 solicitud.estado = nuevo_estado
                 solicitud.fecha_respuesta = timezone.now()
                 solicitud.comentario_aprobador = comentario
                 solicitud.save()
 
-                # Create history record
                 HistorialSolicitud.objects.create(
                     solicitud=solicitud,
                     estado_anterior=estado_anterior,
                     estado_nuevo=nuevo_estado,
                     usuario=request.user,
                     comentario=comentario,
-                    fecha_cambio=timezone.now()
+                    fecha_cambio=timezone.now(),
                 )
-        except SaldoInsuficienteError:
-            return Response({"error": "Saldo insuficiente"}, status=status.HTTP_400_BAD_REQUEST)
+        except SaldoInsuficienteError as e:
+            return Response({"error": e.message}, status=status.HTTP_400_BAD_REQUEST)
+        except SaldoNoExisteError as e:
+            return Response({"error": e.message}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(self.get_serializer(solicitud).data)
 
